@@ -1,5 +1,6 @@
 import { McpServer, ResourceTemplate } from '@modelcontextprotocol/sdk/server/mcp.js';
 import { StreamableHTTPServerTransport } from '@modelcontextprotocol/sdk/server/streamableHttp.js';
+import { Variables } from '@modelcontextprotocol/sdk/shared/uriTemplate.js';
 import express from 'express';
 import { z } from 'zod';
 
@@ -17,48 +18,81 @@ const quotes = [
   "Just keep swimming."
 ];
 
-
-// Maak MCP server
+// Create an MCP server
 const server = new McpServer({
-  name: 'random-quote-server',
-  version: '1.0.0'
+    name: 'demo-server',
+    version: '1.0.0'
 });
 
+// Add an addition tool
 server.registerTool(
-  'random-quote',
+    'add',
+    {
+        title: 'Addition Tool',
+        description: 'Add two numbers',
+        inputSchema: { a: z.number(), b: z.number() },
+        outputSchema: { result: z.number() }
+    },
+    async ({ a, b }) => {
+        const output = { result: a + b };
+        return {
+            content: [{ type: 'text', text: JSON.stringify(output) }],
+            structuredContent: output
+        };
+    }
+);
+
+server.registerResource(
+  'quote',
+  new ResourceTemplate('quote://5', { list: undefined }),
   {
-    title: 'Random Quote Generator',
-    description: 'Geeft een willekeurige inspirerende quote',
-    inputSchema: {}, // geen input
-    outputSchema: { quote: z.string() } // ZodRawShape object
+    title: 'Quote Resource',
+    description: 'Returns a specific inspirational quote by ID',
   },
-  async () => {
-    const quote = quotes[Math.floor(Math.random() * quotes.length)];
+  async (uri, variables: Variables) => {
+    const idVar = variables.id;
+    const idStr = Array.isArray(idVar) ? idVar[0] : idVar;
+
+    if (!idStr) {
+      throw new Error("Missing 'id' parameter");
+    }
+
+    const index = parseInt(idStr) - 1;
+    const quote = quotes[index % quotes.length];
+
     return {
-      content: [{ type: 'text', text: quote }],
-      structuredContent: { quote }
+      contents: [
+        {
+          uri: uri.href,
+          text: quote,
+        },
+      ],
     };
   }
 );
 
-
-// Express setup
+// Set up Express and HTTP transport
 const app = express();
 app.use(express.json());
 
 app.post('/mcp', async (req, res) => {
-  const transport = new StreamableHTTPServerTransport({
-    sessionIdGenerator: undefined,
-    enableJsonResponse: true
-  });
+    const transport = new StreamableHTTPServerTransport({
+        sessionIdGenerator: undefined,
+        enableJsonResponse: true
+    });
 
-  res.on('close', () => transport.close());
+    res.on('close', () => {
+        transport.close();
+    });
 
-  await server.connect(transport);
-  await transport.handleRequest(req, res, req.body);
+    await server.connect(transport);
+    await transport.handleRequest(req, res, req.body);
 });
 
-const port = 3000;
+const port = parseInt(process.env.PORT || '3000');
 app.listen(port, () => {
-  console.log(`Random Quote Generator MCP-server running on http://localhost:${port}/mcp`);
+    console.log(`Demo MCP Server running on http://localhost:${port}/mcp`);
+}).on('error', error => {
+    console.error('Server error:', error);
+    process.exit(1);
 });
